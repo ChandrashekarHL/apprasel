@@ -1,0 +1,29 @@
+# Security - API Keys and Config
+config_api.php
+.env
+.env.local
+
+# Logs
+ai_debug.log
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Backup files
+*.bak
+*.backup
+*_backup.php

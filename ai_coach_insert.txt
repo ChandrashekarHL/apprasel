@@ -1,0 +1,38 @@
+} elseif ($type === 'performance_coach') {
+    $name = $input['name'] ?? 'Faculty';
+    $group = $input['group'] ?? 'General';
+    $metrics = $input['metrics'] ?? [];
+    $lowAreas = $input['low_areas'] ?? [];
+    
+    $faei = $metrics['faei'] ?? 0;
+    $tui = $metrics['tui'] ?? 0;
+    $wfr = $metrics['wfr'] ?? 0;
+    $acs = $metrics['acs'] ?? 0;
+    $rrf = $metrics['rrf'] ?? 0;
+    
+    $lowAreasStr = implode(', ', $lowAreas);
+    
+    $prompt = "You are an AI Performance Improvement Coach for university faculty.
+    
+    Faculty: $name (Group: $group)
+    
+    Performance Metrics:
+    - FAEI: $faei/10
+    - Time Utilization: $tui%
+    - Workload Fulfilment: $wfr%
+    - Academic Contribution: $acs/10
+    - Role Responsibility: $rrf/10
+    
+    Low Areas: $lowAreasStr
+    
+    Generate personalized, actionable improvement suggestions in HTML format.
+    
+    Output JSON: {\"suggestions\": \"<HTML with specific actionable steps>\"}
+    
+    Include:
+    1. Performance Analysis section
+    2. Priority Actions (numbered list with specific  steps for each low area)
+    3. Quick Wins (3 easy improvements)
+    
+    Be specific, encouraging, and professional. Avoid generic advice.";
+

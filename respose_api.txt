@@ -1,0 +1,11 @@
+{"status":"success","message":"Login
+successful","data":{"user":{"SL_NO":712,"COLLEGE":"GMU","USER_NAME":"shivanagowda@gmu.ac.in","USER_GROUP":"FACULTY","ID":"EC23002","ENQUIRY_NO":null,"AADHAR":null,"NAME":"SHIVANAGOWDA
+G
+M","DESIGNATION":"PROFESSOR","FACULTY":"FET","SCHOOL":"SCST","PROGRAMME":"","COURSE":"","DISCIPLINE":"CSE","MOBILE_NO":"7892644508","PHOTO":"[{\"name\":\"..\\\/..\\\/attachments\\\/gmu\\\/profile\\\/1000186005_zr9ii80k.jpg\",\"usrName\":\"1000186005.jpg\",\"size\":125816,\"type\":\"image\\\/jpeg\",\"thumbnail\":\"..\\\/..\\\/attachments\\\/gmu\\\/profile\\\/th1000186005_hgm956us.jpg\",\"thumbnail_type\":\"image\\\/jpeg\",\"thumbnail_size\":22933,\"searchStr\":\"1000186005.jpg,!:sStrEnd\"}]","CATEGORY":null,"STATUS":"ACTIVE","REMARKS":"","CLUSTER":"SET","device_token":"eeBJfS7C9kcWi951oLwFYA:APA91bFbQEnqo2W1_qERhQrSlm3Qu-2phanGubwWnS0QYbMUtIKPmA6tkN_OL7xNsL3qK9DiTopmpx3Ut-16iJpK3uL95eK7dmzI0D_pdG2mCVVcm8fLVJo","ssaid":"123","LAST_UPDATED":"2024-02-17
+00:00:00","PASSWORD_CHANGE":"0000-00-00
+00:00:00","PASSWORD_FLAG":0},"subject_mapping":[{"SL_NO":2272,"ACADEMIC_YEAR":"2025-26","SEASON":"ODD","SCHEME":2023,"FACULTY":"FET","SCHOOL":"SCST","PROGRAMME":"UG","COURSE":"BTECH","DISCIPLINE":"CSE","CYCLE":"NA","SEM":5,"SECTION":"CS3A","SUBJECT_CODE":"UE23CS3504","SUBJECT":"AR\/VR
+and Metaverse Technologies","EMP_ID":"EC23002","NAME":"SHIVANAGOWDA G
+M","CC":"YES","CC_FLAG":1,"APPROVED":1,"REMARKS":"","COMMENT":null,"CAB_FLAG":0,"LAST_UPDATED":"2025-08-20
+13:46:53"},{"SL_NO":2277,"ACADEMIC_YEAR":"2025-26","SEASON":"ODD","SCHEME":2023,"FACULTY":"FET","SCHOOL":"SCST","PROGRAMME":"UG","COURSE":"BTECH","DISCIPLINE":"CSE","CYCLE":"NA","SEM":5,"SECTION":"CS3B","SUBJECT_CODE":"UE23CS3504","SUBJECT":"AR\/VR
+and Metaverse Technologies","EMP_ID":"EC23002","NAME":"SHIVANAGOWDA G
+M","CC":"NO","CC_FLAG":0,"APPROVED":1,"REMARKS":"","COMMENT":null,"CAB_FLAG":0,"LAST_UPDATED":"2025-08-20 13:59:27"}]}}

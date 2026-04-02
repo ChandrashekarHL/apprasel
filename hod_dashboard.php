@@ -20,7 +20,10 @@ if (!$isHOD) {
 // NEW: Get comprehensive performance data using analyzer (Hierarchical View)
 // We pass the logged-in user's EMP_ID so the analyzer can determine their scope (VC/Dean/HOD)
 // We also pass department as a fallback.
-$requesterId = !empty($user['emp_id']) ? $user['emp_id'] : $user['username'];
+// Use ERP profile ID as primary requester ID (e.g. 'hod59') — this exists in staff_master
+// Fall back to emp_id, then username if neither is available
+$requesterId = !empty($_SESSION['erp_profile']['ID']) ? $_SESSION['erp_profile']['ID'] 
+             : (!empty($user['emp_id']) ? $user['emp_id'] : $user['username']);
 $facultyPerformance = $analyzer->getAllFacultyPerformance('flag_priority', $requesterId, $user['department']);
 
 // Aggregate stats
@@ -178,7 +181,7 @@ $compliance = $avgWeeklyCompletion; // For backward compatibility with charts
     <!-- Hero Header -->
     <div class="dashboard-hero">
         <div class="hero-text">
-            <h2>FW-AEMS Governance Center</h2>
+            <h2>SCHOLARIX Governance Center</h2>
             <p>Welcome, <strong><?php echo htmlspecialchars($user['full_name']); ?></strong>. Real-time academic effectiveness overview.</p>
             <div style="font-size: 0.85em; margin-top: 5px;">
                 <!-- <a href="dean_dashboard.php" style="color: var(--primary-brand); text-decoration: underline; margin-right: 15px;">Dean's Console</a>
@@ -198,7 +201,7 @@ $compliance = $avgWeeklyCompletion; // For backward compatibility with charts
             <a href="hod_allocations.php" class="btn-action btn-primary-action">
                 <i class="fas fa-users-cog"></i> Manage Allocations
             </a>
-            <a href="dashboard.php" class="btn-action btn-outline-action">
+            <a href="https://erp.gmit.info/gmu_ac/output/menu.php" class="btn-action btn-outline-action">
                 <i class="fas fa-arrow-left"></i> Main Board
             </a>
         </div>
@@ -220,8 +223,8 @@ $compliance = $avgWeeklyCompletion; // For backward compatibility with charts
     <?php
     // Daily Activity Compliance Alert (Filtered by Dept)
     $defaultersStmt = $pdo->prepare("SELECT f.full_name, COUNT(d.id) as missed_count 
-                                   FROM ad_daily_ai_activity d 
-                                   JOIN ad_faculty_users f ON d.faculty_id = f.id 
+                                   FROM fms_daily_ai_activity d 
+                                   JOIN fms_faculty_users f ON d.faculty_id = f.id 
                                    WHERE d.status = 'Missed' 
                                    AND (f.department = ? OR f.school = ?)
                                    GROUP BY d.faculty_id 
@@ -273,15 +276,17 @@ $compliance = $avgWeeklyCompletion; // For backward compatibility with charts
     // Find faculty with no ac_dar entry for today
     try {
         $darMissingStmt = $pdo->prepare("
-            SELECT u.id, u.emp_id, u.full_name, u.designation, u.department
-            FROM ad_faculty_users u
-            LEFT JOIN ac_dar d ON d.EMP_ID = u.emp_id AND d.DATE = CURDATE()
+            SELECT u.id, s.EMP_ID as emp_id, s.NAME as full_name, s.DESIGNATION as designation, s.DEPT as department
+            FROM staff_master s
+            LEFT JOIN fms_faculty_users u ON s.EMP_ID = u.emp_id
+            LEFT JOIN ac_dar d ON d.EMP_ID = s.EMP_ID AND d.DATE = CURDATE()
             WHERE d.SL_NO IS NULL
-              AND u.role = 'Faculty'
-              AND (u.department = ? OR u.school = ?)
-            ORDER BY u.full_name
+              AND s.STATUS = 'WORKING' 
+              AND s.CATEGORY = 'TEACHING'
+              AND s.DEPT = ?
+            ORDER BY s.NAME
         ");
-        $darMissingStmt->execute([$user['department'], $user['department']]);
+        $darMissingStmt->execute([$user['department']]);
         $darMissingFaculty = $darMissingStmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (Exception $e) {
         $darMissingFaculty = [];
@@ -290,7 +295,7 @@ $compliance = $avgWeeklyCompletion; // For backward compatibility with charts
     // Fetch active Sentinel Oversight flags for this HOD's department
     $oversightFlags = [];
     try {
-        $osStmt = $pdo->prepare("SELECT faculty_id, category, message, created_at FROM ad_agentic_oversight WHERE status = 'active'");
+        $osStmt = $pdo->prepare("SELECT faculty_id, category, message, created_at FROM fms_agentic_oversight WHERE status = 'active'");
         $osStmt->execute();
         while($row = $osStmt->fetch(PDO::FETCH_ASSOC)) {
             $oversightFlags[$row['faculty_id']][] = $row;
@@ -358,8 +363,8 @@ $compliance = $avgWeeklyCompletion; // For backward compatibility with charts
     try {
         $escalationsStmt = $pdo->prepare("
             SELECT n.*, f.full_name, f.designation 
-            FROM ad_ai_notifications n
-            JOIN ad_faculty_users f ON n.faculty_id = f.id
+            FROM fms_ai_notifications n
+            JOIN fms_faculty_users f ON n.faculty_id = f.id
             WHERE n.type = 'escalation' 
               AND n.status = 'unread'
               AND (f.department = ? OR f.school = ?)

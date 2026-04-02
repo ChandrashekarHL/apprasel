@@ -97,21 +97,32 @@ $groups = $pdo->query("SELECT * FROM fms_workload_groups ORDER BY group_code")->
 
 // Fetch Faculty with Group Info (Filtered by HOD Dept)
 $currentUser = getCurrentUser($pdo);
-$dept = $currentUser['department']; // Fallback from fms_faculty_users
+$dept_raw = $currentUser['department'] ?? ''; // e.g. 'CHE' from fms_faculty_users
+$hodEmpId  = $currentUser['emp_id'] ?? null;
 
-// Resolve the HOD's actual DEPT code from staff_master (short code like 'CHE')
-// fms_faculty_users.department may store a different format than staff_master.DEPT
-$hodEmpId = $currentUser['emp_id'] ?? null;
+// Resolve true DEPT code from staff_master
+$dept = $dept_raw; // fallback
+
+// Level 1: HOD's own EMP_ID
 if ($hodEmpId) {
     try {
-        $hodDeptStmt = $pdo->prepare("SELECT DEPT FROM staff_master WHERE EMP_ID = ? LIMIT 1");
-        $hodDeptStmt->execute([$hodEmpId]);
-        $hodDeptRow = $hodDeptStmt->fetch(PDO::FETCH_ASSOC);
-        if ($hodDeptRow && !empty($hodDeptRow['DEPT'])) {
-            $dept = $hodDeptRow['DEPT']; // Use the exact DEPT code from staff_master
-        }
-    } catch (Exception $e) {
-        // Keep the fallback $dept from fms_faculty_users
+        $s = $pdo->prepare("SELECT DEPT FROM staff_master WHERE EMP_ID = ? LIMIT 1");
+        $s->execute([$hodEmpId]);
+        $r = $s->fetch(PDO::FETCH_ASSOC);
+        if ($r && !empty($r['DEPT'])) { $dept = $r['DEPT']; }
+    } catch (Exception $e) {}
+}
+
+// Level 2: FMS department to staff_master DEPT mapping
+if ($dept === $dept_raw && $dept_raw) {
+    $dept_map = [
+        'CHE' => 'CHEMISTRY',
+        'PHY' => 'PHYSICS',
+        'MAT' => 'MAT'
+    ];
+    $upper_filter = strtoupper(trim($dept_raw));
+    if (isset($dept_map[$upper_filter])) {
+        $dept = $dept_map[$upper_filter];
     }
 }
 

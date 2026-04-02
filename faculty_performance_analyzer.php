@@ -60,29 +60,38 @@ class FacultyPerformanceAnalyzer {
         
         $authorized_emp_ids = [];
 
-        // ── Step 1: Resolve the HOD's actual DEPT code from staff_master ─────────
-        // fms_faculty_users.department may store a long name (e.g. "CHEMISTRY-FBAS")
-        // while staff_master.DEPT uses short codes (e.g. "CHE").
-        // We look up the requester's own row in staff_master to get the correct DEPT.
+        // ── Resolve the actual DEPT code from staff_master ───────────────────────
         $resolved_dept = null;
+
+        // Level 1: Look up the requester's own record in staff_master by their ERP/EMP ID
         if ($requester_emp_id) {
             try {
                 $hodStmt = $this->pdo->prepare(
-                    "SELECT DEPT, USER_GROUP, DESIGNATION FROM staff_master WHERE EMP_ID = ? LIMIT 1"
+                    "SELECT DEPT FROM staff_master WHERE EMP_ID = ? LIMIT 1"
                 );
                 $hodStmt->execute([$requester_emp_id]);
                 $hodRow = $hodStmt->fetch(PDO::FETCH_ASSOC);
                 if ($hodRow && !empty($hodRow['DEPT'])) {
                     $resolved_dept = $hodRow['DEPT'];
                 }
-            } catch (Exception $e) {
-                // Silently fallback
-            }
+            } catch (Exception $e) { /* continue */ }
         }
 
-        // If we couldn't resolve from staff_master, fall back to the passed dept_filter
+        // Level 2: FMS department to staff_master DEPT mapping
         if (!$resolved_dept && $dept_filter) {
-            $resolved_dept = $dept_filter;
+            $dept_map = [
+                'CHE' => 'CHEMISTRY',
+                'PHY' => 'PHYSICS',
+                'MAT' => 'MAT'
+            ];
+            
+            $upper_filter = strtoupper(trim($dept_filter));
+            if (isset($dept_map[$upper_filter])) {
+                $resolved_dept = $dept_map[$upper_filter];
+            } else {
+                // If it's a prefix like "CSE" or "MECH", this keeps it intact
+                $resolved_dept = $dept_filter;
+            }
         }
 
         // ── Step 2: Fetch Performance Data filtered by the resolved DEPT ──────────

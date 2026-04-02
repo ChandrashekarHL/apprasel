@@ -10,13 +10,57 @@ $message = '';
 
 // Handle Group Update
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['assign_group'])) {
-    $fid = $_POST['faculty_id'];
+    $emp_id = $_POST['emp_id'] ?? '';
+    // Use fallback for faculty_id if emp_id is not present (for backward compatibility if needed)
+    $fid = $_POST['faculty_id'] ?? null; 
     $gid = $_POST['group_id'] ?: null; // Handle unassigned as NULL
     
-    $stmt = $pdo->prepare("UPDATE ad_faculty_users SET group_id = ? WHERE id = ?");
-    if ($stmt->execute([$gid, $fid])) {
-        $message = "Faculty group updated successfully.";
-        $msgType = "success";
+    if ($emp_id) {
+        // Check if user exists in fms_faculty_users
+        $chkStmt = $pdo->prepare("SELECT id FROM fms_faculty_users WHERE emp_id = ? OR username = ?");
+        $chkStmt->execute([$emp_id, $emp_id]);
+        $existing = $chkStmt->fetch();
+
+        if ($existing) {
+            $stmt = $pdo->prepare("UPDATE fms_faculty_users SET group_id = ? WHERE id = ?");
+            if ($stmt->execute([$gid, $existing['id']])) {
+                $message = "Faculty group updated successfully.";
+                $msgType = "success";
+            }
+        } else {
+            // User not in fms_faculty_users yet, insert them
+            $sStmt = $pdo->prepare("SELECT * FROM staff_master WHERE EMP_ID = ?");
+            $sStmt->execute([$emp_id]);
+            $staff = $sStmt->fetch();
+            if ($staff) {
+                // Ensure role assignment matches logic from sync script
+                $role = 'Faculty';
+                if (strpos(strtoupper($staff['DESIGNATION']), 'HOD') !== false || strtoupper($staff['USER_GROUP'] ?? '') === 'HOD') {
+                    $role = 'HOD';
+                }
+                if (strpos(strtoupper($staff['DESIGNATION']), 'DEAN') !== false) {
+                    $role = 'Dean';
+                }
+
+                $insStmt = $pdo->prepare("INSERT INTO fms_faculty_users (emp_id, username, full_name, department, school, designation, mobile, email, role, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                if ($insStmt->execute([$staff['EMP_ID'], $staff['EMP_ID'], $staff['NAME'], $staff['DEPT'], $staff['SCHOOL'], $staff['DESIGNATION'], $staff['MOBILE'], $staff['EMAIL'] ?? '', $role, $gid])) {
+                    $message = "Faculty synced and group assigned successfully.";
+                    $msgType = "success";
+                } else {
+                    $message = "Error assigning group.";
+                    $msgType = "error";
+                }
+            } else {
+                $message = "Error: Staff member not found in master records.";
+                $msgType = "error";
+            }
+        }
+    } elseif ($fid) {
+        $stmt = $pdo->prepare("UPDATE fms_faculty_users SET group_id = ? WHERE id = ?");
+        if ($stmt->execute([$gid, $fid])) {
+            $message = "Faculty group updated successfully.";
+            $msgType = "success";
+        }
     }
 }
 
@@ -30,13 +74,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_faculty'])) {
     $gid = $_POST['new_group_id'] ?: null;
     
     // Check duplicate
-    $chk = $pdo->prepare("SELECT id FROM ad_faculty_users WHERE username = ?");
+    $chk = $pdo->prepare("SELECT id FROM fms_faculty_users WHERE username = ?");
     $chk->execute([$user]);
     if ($chk->rowCount() > 0) {
         $message = "Error: Username '$user' already exists.";
         $msgType = "error"; // Styling needs to handle 'error' class or just use warning
     } else {
-        $sql = "INSERT INTO ad_faculty_users (username, password, full_name, department, designation, role, group_id, date_joined) VALUES (?, ?, ?, ?, ?, 'Faculty', ?, CURDATE())";
+        $sql = "INSERT INTO fms_faculty_users (username, password, full_name, department, designation, role, group_id, date_joined) VALUES (?, ?, ?, ?, ?, 'Faculty', ?, CURDATE())";
         $stmt = $pdo->prepare($sql);
         if ($stmt->execute([$user, $pass, $name, $dept, $desig, $gid])) {
             $message = "New Faculty '$name' created successfully!";
@@ -49,22 +93,54 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_faculty'])) {
 }
 
 // Fetch Groups
-$groups = $pdo->query("SELECT * FROM ad_workload_groups ORDER BY group_code")->fetchAll(PDO::FETCH_ASSOC);
+$groups = $pdo->query("SELECT * FROM fms_workload_groups ORDER BY group_code")->fetchAll(PDO::FETCH_ASSOC);
 
-// Fetch Faculty with Group Info
 // Fetch Faculty with Group Info (Filtered by HOD Dept)
 $currentUser = getCurrentUser($pdo);
-$dept = $currentUser['department'];
+$dept = $currentUser['department']; // Fallback from fms_faculty_users
 
-$sql = "SELECT u.id, u.full_name, u.department, u.designation, u.group_id, g.group_code, g.group_name 
-        FROM ad_faculty_users u 
-        LEFT JOIN ad_workload_groups g ON u.group_id = g.id
-        WHERE u.role = 'Faculty'
-        AND (u.department = ? OR u.school = ?)
-        ORDER BY u.full_name";
+// Resolve the HOD's actual DEPT code from staff_master (short code like 'CHE')
+// fms_faculty_users.department may store a different format than staff_master.DEPT
+$hodEmpId = $currentUser['emp_id'] ?? null;
+if ($hodEmpId) {
+    try {
+        $hodDeptStmt = $pdo->prepare("SELECT DEPT FROM staff_master WHERE EMP_ID = ? LIMIT 1");
+        $hodDeptStmt->execute([$hodEmpId]);
+        $hodDeptRow = $hodDeptStmt->fetch(PDO::FETCH_ASSOC);
+        if ($hodDeptRow && !empty($hodDeptRow['DEPT'])) {
+            $dept = $hodDeptRow['DEPT']; // Use the exact DEPT code from staff_master
+        }
+    } catch (Exception $e) {
+        // Keep the fallback $dept from fms_faculty_users
+    }
+}
+
+// Same base query strategy as faculty_performance_analyzer.php
+$sql = "SELECT s.EMP_ID as emp_id, s.NAME as full_name, s.DESIGNATION as designation, s.DEPT as department, 
+               u.id, u.group_id, g.group_code, g.group_name 
+        FROM staff_master s 
+        LEFT JOIN fms_faculty_users u ON s.EMP_ID = u.emp_id 
+        LEFT JOIN fms_workload_groups g ON u.group_id = g.id
+        WHERE s.STATUS = 'WORKING' 
+        AND s.CATEGORY = 'TEACHING'
+        AND s.DEPT = ?
+        ORDER BY s.NAME";
 $stmt = $pdo->prepare($sql);
-$stmt->execute([$dept, $dept]);
+$stmt->execute([$dept]);
 $faculty = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// If staff_master has no records matching (e.g., using pure FMS structures), fallback to fms_faculty_users query
+if (empty($faculty)) {
+    $sql_fallback = "SELECT u.id, u.full_name, u.department, u.designation, u.group_id, g.group_code, g.group_name, u.emp_id 
+            FROM fms_faculty_users u 
+            LEFT JOIN fms_workload_groups g ON u.group_id = g.id
+            WHERE u.role = 'Faculty'
+            AND (u.department = ? OR u.school = ?)
+            ORDER BY u.full_name";
+    $stmt_fallback = $pdo->prepare($sql_fallback);
+    $stmt_fallback->execute([$dept, $dept]);
+    $faculty = $stmt_fallback->fetchAll(PDO::FETCH_ASSOC);
+}
 
 ?>
 <style>
@@ -125,12 +201,13 @@ $faculty = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <small style="color:#666;"><?php echo htmlspecialchars($f['designation']); ?></small>
                     </td>
                     <form method="POST">
-                        <input type="hidden" name="faculty_id" value="<?php echo $f['id']; ?>">
+                        <input type="hidden" name="faculty_id" value="<?php echo isset($f['id']) ? $f['id'] : ''; ?>">
+                        <input type="hidden" name="emp_id" value="<?php echo isset($f['emp_id']) ? $f['emp_id'] : ''; ?>">
                         <td>
                             <select name="group_id">
                                 <option value="">-- Unassigned --</option>
                                 <?php foreach($groups as $g): ?>
-                                    <option value="<?php echo $g['id']; ?>" <?php if($f['group_id'] == $g['id']) echo 'selected'; ?>>
+                                    <option value="<?php echo $g['id']; ?>" <?php if(isset($f['group_id']) && $f['group_id'] == $g['id']) echo 'selected'; ?>>
                                         Group <?php echo $g['group_code']; ?> - <?php echo $g['group_name']; ?>
                                     </option>
                                 <?php endforeach; ?>

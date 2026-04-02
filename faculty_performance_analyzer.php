@@ -4,7 +4,7 @@
  * 
  * Analyzes faculty performance based on:
  * - Weekly progress (all semester weeks via WorkloadEngine)
- * - Daily task completion (ad_daily_ai_activity)
+ * - Daily task completion (fms_daily_ai_activity)
  * - AI supervisor interactions
  * - FAEI metrics and components
  * 
@@ -56,69 +56,62 @@ class FacultyPerformanceAnalyzer {
      * @param string|null $dept_filter Optional explicit department filter
      * @return array Faculty performance data
      */
-    public function getAllFacultyPerformance($sort_by = 'flag_priority', $requester_emp_id = null, $dept_filter = null) {
+    public function getAllFacultyPerformance($sort_by = 'flag_priority', $requester_emp_id = null, $dept_filter = null, $allow_all = false) {
         
         $authorized_emp_ids = [];
 
-        // 1. Call External API to get Authorized Staff List
-        // The API handles the hierarchy logic (VC -> Dean -> HOD) internally.
+        // ── Step 1: Resolve the HOD's actual DEPT code from staff_master ─────────
+        // fms_faculty_users.department may store a long name (e.g. "CHEMISTRY-FBAS")
+        // while staff_master.DEPT uses short codes (e.g. "CHE").
+        // We look up the requester's own row in staff_master to get the correct DEPT.
+        $resolved_dept = null;
         if ($requester_emp_id) {
-            $apiUrl = "https://erp.gmit.info/v3/fms/get_staff_by_dept.php";
-            
-            // Prepare POST data based on user input or session data
-            // Session username is often the EMP_ID or mapped to it.
-            $postData = [
-                'username' => $requester_emp_id, 
-                'dept' => $dept_filter // detailed filter if needed, often optional for Dean/VC
-            ];
-
-            $ch = curl_init($apiUrl);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postData)); // Use Form Data (Standard POST)
-            // curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: applications/x-www-form-urlencoded']); // Optional, default for curl
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // For dev/local if needed
-            
-            $response = curl_exec($ch);
-            curl_close($ch);
-            
-            // Debugging (Uncomment if needed)
-            // error_log("API Response for $requester_emp_id: " . $response);
-
-            if ($response) {
-                $result = json_decode($response, true);
-                if (isset($result['status']) && $result['status'] === 'success' && !empty($result['data'])) {
-                    // Extract EMP_IDs from the API response
-                    $authorized_emp_ids = array_column($result['data'], 'EMP_ID');
+            try {
+                $hodStmt = $this->pdo->prepare(
+                    "SELECT DEPT, USER_GROUP, DESIGNATION FROM staff_master WHERE EMP_ID = ? LIMIT 1"
+                );
+                $hodStmt->execute([$requester_emp_id]);
+                $hodRow = $hodStmt->fetch(PDO::FETCH_ASSOC);
+                if ($hodRow && !empty($hodRow['DEPT'])) {
+                    $resolved_dept = $hodRow['DEPT'];
                 }
+            } catch (Exception $e) {
+                // Silently fallback
             }
         }
 
-        // 2. Fetch Performance Data for Authorized EMP_IDs
-        $sql = "SELECT u.id, u.full_name, u.designation, u.department, u.group_id, g.group_code 
-                FROM ad_faculty_users u
-                LEFT JOIN ad_workload_groups g ON u.group_id = g.id
-                WHERE u.username NOT LIKE 'reviewer%'";
+        // If we couldn't resolve from staff_master, fall back to the passed dept_filter
+        if (!$resolved_dept && $dept_filter) {
+            $resolved_dept = $dept_filter;
+        }
+
+        // ── Step 2: Fetch Performance Data filtered by the resolved DEPT ──────────
+        $sql = "SELECT 
+                    s.EMP_ID as emp_id,
+                    s.NAME as full_name,
+                    s.DESIGNATION as designation,
+                    s.DEPT as department,
+                    u.id, 
+                    u.username, 
+                    u.group_id, 
+                    g.group_code 
+                FROM staff_master s
+                LEFT JOIN fms_faculty_users u ON s.EMP_ID = u.emp_id
+                LEFT JOIN fms_workload_groups g ON u.group_id = g.id
+                WHERE s.STATUS = 'WORKING' AND s.CATEGORY = 'TEACHING'";
         
         $params = [];
         
-        if (!empty($authorized_emp_ids)) {
-            // Filter by the allowed EMP_IDs from API
-            $placeholders = str_repeat('?,', count($authorized_emp_ids) - 1) . '?';
-            $sql .= " AND (emp_id IN ($placeholders) OR username IN ($placeholders))";
-            $params = array_merge($params, $authorized_emp_ids, $authorized_emp_ids); //Check both fields to be safe
-        } elseif ($dept_filter) {
-            // Fallback: Legacy Department Filter if API fails or returns nothing
-            $sql .= " AND (department = ? OR school = ?)"; 
-            $params[] = $dept_filter;
-            $params[] = $dept_filter;
-        } elseif ($requester_emp_id && empty($authorized_emp_ids)) {
-             // API was called but returned no authorized users (e.g. access denied)
-             // Force return empty set
-             $sql .= " AND 1=0"; 
+        if ($resolved_dept) {
+            // Primary: filter by the exact DEPT code from staff_master
+            $sql .= " AND s.DEPT = ?";
+            $params[] = $resolved_dept;
+        } elseif (!$allow_all) {
+            // If no filter at all, show nothing for safety
+            $sql .= " AND 1=0";
         }
         
-        $sql .= " ORDER BY full_name";
+        $sql .= " ORDER BY s.NAME";
         
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
@@ -126,30 +119,40 @@ class FacultyPerformanceAnalyzer {
         
         $results = [];
         foreach ($facultyList as $faculty) {
-            $fid = $faculty['id'];
+            $fid = $faculty['id']; // This could be null if they haven't logged in
             
             // Core metrics
-            $faei = $this->engine->calculateFAEI($fid);
-            $tui = $this->engine->calculateTUI($fid);
+            $faei = $fid ? $this->engine->calculateFAEI($fid) : 0;
+            $tui  = $fid ? $this->engine->calculateTUI($fid) : 0;
             
             // Weekly analysis
-            $weeklyData = $this->analyzeWeeklyProgress($fid);
+            $weeklyData = $fid ? $this->analyzeWeeklyProgress($fid) : [
+                'completion_rate' => 0, 'weeks_submitted' => 0, 'total_weeks' => 0, 'pattern' => 'No account'
+            ];
             
             // Daily tasks
-            $taskData = $this->analyzeTaskCompletion($fid);
+            $taskData = $fid ? $this->analyzeTaskCompletion($fid) : [
+                'completed' => 0, 'missed' => 0, 'total' => 0, 'completion_rate' => 0
+            ];
             
             // AI engagement
-            $aiData = $this->analyzeAIInteractions($fid);
+            $aiData = $fid ? $this->analyzeAIInteractions($fid) : [
+                'active_days' => 0, 'help_seeking_count' => 0, 'reporting_count' => 0, 'pattern' => 'No account', 'summary' => 'Never logged in'
+            ];
             
             // Trend calculation
-            $trend = $this->calculateTrend($fid);
+            $trend = $fid ? $this->calculateTrend($fid) : ['label' => 'Insufficient data', 'direction' => 0];
             
             // Agentic Oversight check
-            $oversightStmt = $this->pdo->prepare("SELECT message FROM ad_agentic_oversight WHERE faculty_id = ? AND status = 'active' LIMIT 1");
-            $oversightStmt->execute([$fid]);
-            $oversight = $oversightStmt->fetch(PDO::FETCH_ASSOC);
-            $is_oversight = (bool)$oversight;
-            $oversight_msg = $oversight['message'] ?? '';
+            $is_oversight = false;
+            $oversight_msg = '';
+            if ($fid) {
+                $oversightStmt = $this->pdo->prepare("SELECT message FROM fms_agentic_oversight WHERE faculty_id = ? AND status = 'active' LIMIT 1");
+                $oversightStmt->execute([$fid]);
+                $oversight = $oversightStmt->fetch(PDO::FETCH_ASSOC);
+                $is_oversight = (bool)$oversight;
+                $oversight_msg = $oversight['message'] ?? '';
+            }
 
             // Performance flag
             $flag = $this->determinePerformanceFlag($fid, $faei, $weeklyData, $taskData);
@@ -160,6 +163,8 @@ class FacultyPerformanceAnalyzer {
             $results[] = [
                 'id' => $fid,
                 'name' => $faculty['full_name'],
+                'emp_id' => $faculty['emp_id'] ?? '',
+                'username' => $faculty['username'] ?? '',
                 'designation' => $faculty['designation'],
                 'department' => $faculty['department'],
                 'faei' => round($faei * 10, 1), // Convert to 0-10 scale
@@ -253,7 +258,7 @@ class FacultyPerformanceAnalyzer {
         
         $stmt = $this->pdo->prepare(
             "SELECT status, COUNT(*) as count 
-             FROM ad_daily_ai_activity 
+             FROM fms_daily_ai_activity 
              WHERE faculty_id = ? AND activity_date >= ? 
              GROUP BY status"
         );
@@ -285,7 +290,7 @@ class FacultyPerformanceAnalyzer {
         $stmt = $this->pdo->prepare(
             "SELECT COUNT(DISTINCT activity_date) as active_days,
                     GROUP_CONCAT(DISTINCT activity_date ORDER BY activity_date DESC) as dates
-             FROM ad_daily_ai_activity 
+             FROM fms_daily_ai_activity 
              WHERE faculty_id = ? 
              AND activity_date >= ? 
              AND interaction_log IS NOT NULL 
@@ -299,7 +304,7 @@ class FacultyPerformanceAnalyzer {
         // Analyze conversation patterns (basic)
         $stmt = $this->pdo->prepare(
             "SELECT interaction_log 
-             FROM ad_daily_ai_activity 
+             FROM fms_daily_ai_activity 
              WHERE faculty_id = ? 
              AND activity_date >= ? 
              AND interaction_log IS NOT NULL 
